@@ -88,6 +88,38 @@
     send();
   }
 
+  function openSplitViewer(source, dark, title, splitBtn) {
+    const viewerRequestId = `viewer-${++viewerCounter}-${Date.now()}`;
+    const initMessage = {
+      type: 'PLANTUML_VIEWER_INIT',
+      requestId: viewerRequestId,
+      source,
+      dark,
+      title
+    };
+
+    chrome.runtime.sendMessage({
+      type: 'PLANTUML_OPEN_SPLIT_VIEWER',
+      requestId: viewerRequestId
+    }, (result) => {
+      const error = chrome.runtime.lastError;
+      if (error || !result || result.mode === 'fallback') {
+        splitBtn.title = 'Split View unavailable; opening standalone viewer';
+        TRACE('split viewer unavailable, using standalone viewer', error || result?.reason);
+        openStandaloneViewer(viewerRequestId, initMessage, splitBtn);
+        return;
+      }
+      if (result.mode === 'already-split') {
+        splitBtn.title = 'Current tab is already in a split view';
+        TRACE('viewer not opened because current tab is already split');
+        return;
+      }
+
+      splitBtn.title = 'Open diagram viewer in split view';
+      sendViewerRuntimeInit(initMessage);
+    });
+  }
+
   function findDiagramTitle(blockEl) {
     const message = blockEl.closest(
       '[data-message-author-role], [data-testid^="conversation-turn"], article'
@@ -325,6 +357,12 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
       '<path d="M10.5 1.5h4v4h-1.5V4.06l-5.47 5.47-1.06-1.06 5.47-5.47H10.5V1.5ZM3 3h4v1.5H4.5v7h7V10H13v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/>' +
       '</svg>';
+    const ICON_SPLIT =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+      '<rect x="1.5" y="2.5" width="5.5" height="11" rx="1"/>' +
+      '<rect x="9" y="2.5" width="5.5" height="11" rx="1"/>' +
+      '<path d="M8 2.5v11"/>' +
+      '</svg>';
     toggleBtn.innerHTML = ICON_CODE;
 
     // Second header button: copy the rendered diagram to the clipboard
@@ -390,11 +428,30 @@
     });
     viewerBtn.innerHTML = ICON_OPEN;
 
-    // Toggle on the LEFT, then bitmap-copy, then edit-as-draft, then badge on the RIGHT.
+    const splitBtn = document.createElement('button');
+    splitBtn.type = 'button';
+    splitBtn.className = 'plantuml-for-chatgpt-open-split-viewer';
+    splitBtn.setAttribute('aria-label', 'Open diagram in split view');
+    splitBtn.title = 'Open diagram in split view';
+    splitBtn.style.cssText =
+      'display: inline-flex; align-items: center; justify-content: center; ' +
+      'width: 22px; height: 22px; padding: 0; margin: 0 4px 0 0; ' +
+      'background: transparent; border: 1px solid transparent; ' +
+      'border-radius: 4px; cursor: pointer; color: ' + t.wrapperFg + ';';
+    splitBtn.addEventListener('mouseenter', () => {
+      splitBtn.style.background = t.borderCol;
+    });
+    splitBtn.addEventListener('mouseleave', () => {
+      splitBtn.style.background = 'transparent';
+    });
+    splitBtn.innerHTML = ICON_SPLIT;
+
+    // Toggle on the LEFT, then copy/edit/open/split actions, then badge.
     header.appendChild(toggleBtn);
     header.appendChild(bitmapBtn);
     header.appendChild(editBtn);
     header.appendChild(viewerBtn);
+    header.appendChild(splitBtn);
     header.appendChild(badge);
     // With both children left-aligned, switch the header from
     // space-between to flex-start so they sit next to each other.
@@ -410,7 +467,7 @@
     iframe.setAttribute('title', 'PlantUML diagram');
 
     wrapper.appendChild(iframe);
-    return { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, viewerBtn, theme: t, icons: { code: ICON_CODE, eye: ICON_EYE, image: ICON_IMAGE, pencil: ICON_PENCIL, open: ICON_OPEN } };
+    return { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, viewerBtn, splitBtn, theme: t, icons: { code: ICON_CODE, eye: ICON_EYE, image: ICON_IMAGE, pencil: ICON_PENCIL, open: ICON_OPEN, split: ICON_SPLIT } };
   }
 
   // ------------------------------------------------------------------
@@ -558,7 +615,7 @@
 
     const requestId = `puml-${++blockCounter}-${Date.now()}`;
     const dark = isDarkMode();
-    const { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, viewerBtn, theme: t, icons } = buildIframe(requestId, dark);
+    const { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, viewerBtn, splitBtn, theme: t, icons } = buildIframe(requestId, dark);
     const title = findDiagramTitle(blockEl);
 
     // Insert the wrapper *before* the original block, then move the
@@ -596,40 +653,21 @@
       TRACE('toggle clicked, showingSource=' + showingSource);
     });
 
-  viewerBtn.addEventListener('click', () => {
-    const viewerRequestId = `viewer-${++viewerCounter}-${Date.now()}`;
-    const initMessage = {
-      type: 'PLANTUML_VIEWER_INIT',
-      requestId: viewerRequestId,
-      source,
-      dark,
-      title
-    };
+    viewerBtn.addEventListener('click', () => {
+      const viewerRequestId = `viewer-${++viewerCounter}-${Date.now()}`;
+      const initMessage = {
+        type: 'PLANTUML_VIEWER_INIT',
+        requestId: viewerRequestId,
+        source,
+        dark,
+        title
+      };
+      openStandaloneViewer(viewerRequestId, initMessage, viewerBtn);
+    });
 
-    const sendSplitRequest = () => {
-      chrome.runtime.sendMessage({
-        type: 'PLANTUML_OPEN_SPLIT_VIEWER',
-        requestId: viewerRequestId
-      }, (result) => {
-        const error = chrome.runtime.lastError;
-        if (error || !result || result.mode === 'fallback') {
-          TRACE('split viewer unavailable, using standalone viewer', error || result?.reason);
-          openStandaloneViewer(viewerRequestId, initMessage, viewerBtn);
-          return;
-        }
-        if (result.mode === 'already-split') {
-          viewerBtn.title = 'Current tab is already in a split view';
-          TRACE('viewer not opened because current tab is already split');
-          return;
-        }
-
-        viewerBtn.title = 'Open diagram viewer in split view';
-        sendViewerRuntimeInit(initMessage);
-      });
-    };
-
-    sendSplitRequest();
-  });
+    splitBtn.addEventListener('click', () => {
+      openSplitViewer(source, dark, title, splitBtn);
+    });
 
     // ------------------------------------------------------------------
     // Bitmap-copy button: ask the iframe to render the SVG to a PNG
