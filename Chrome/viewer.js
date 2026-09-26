@@ -40,6 +40,11 @@ let readyTimer = null;
 const pendingBitmap = new Map();
 const pendingSvg = new Map();
 
+// The source panel is for viewing/copying only; keep this explicit even if
+// the host browser or a future refactor changes the element implementation.
+sourceEl.contentEditable = 'false';
+sourceEl.setAttribute('aria-readonly', 'true');
+
 function postToRenderer(message) {
   renderer.contentWindow.postMessage(message, '*');
 }

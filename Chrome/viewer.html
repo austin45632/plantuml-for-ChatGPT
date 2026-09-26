@@ -46,6 +46,7 @@
       overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       background: inherit; color: inherit;
+      user-select: text; -webkit-user-modify: read-only; cursor: default;
     }
     #status { position: absolute; inset: 0; display: grid; place-items: center; color: #656d76; pointer-events: none; }
     body.dark #toolbar { color: #e6edf3; }
@@ -68,7 +69,7 @@
     <div id="stage">
       <div id="canvas">
         <iframe id="renderer" title="PlantUML diagram"></iframe>
-        <pre id="source"></pre>
+        <pre id="source" contenteditable="false" aria-readonly="true"></pre>
       </div>
       <div id="status">Waiting for diagram…</div>
     </div>
