@@ -40,11 +40,6 @@ let readyTimer = null;
 const pendingBitmap = new Map();
 const pendingSvg = new Map();
 
-// The source panel is for viewing/copying only; keep this explicit even if
-// the host browser or a future refactor changes the element implementation.
-sourceEl.contentEditable = 'false';
-sourceEl.setAttribute('aria-readonly', 'true');
-
 function postToRenderer(message) {
   renderer.contentWindow.postMessage(message, '*');
 }
@@ -184,7 +179,7 @@ window.addEventListener('message', (event) => {
     dark = data.dark === true;
     document.body.classList.toggle('dark', dark);
     titleEl.textContent = typeof data.title === 'string' && data.title ? data.title : 'PlantUML diagram';
-    sourceEl.textContent = source;
+    sourceEl.value = source;
     renderer.src = RENDERER_URL;
     ready = true;
     if (readyTimer) {

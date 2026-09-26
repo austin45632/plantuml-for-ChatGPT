@@ -45,8 +45,8 @@
       max-width: none; max-height: none; padding: 18px; margin: 0;
       overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
       font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      background: inherit; color: inherit;
-      user-select: text; -webkit-user-modify: read-only; cursor: default;
+      background: inherit; color: inherit; border: 0; outline: 0;
+      resize: none; user-select: text; cursor: text;
     }
     #status { position: absolute; inset: 0; display: grid; place-items: center; color: #656d76; pointer-events: none; }
     body.dark #toolbar { color: #e6edf3; }
@@ -69,7 +69,7 @@
     <div id="stage">
       <div id="canvas">
         <iframe id="renderer" title="PlantUML diagram"></iframe>
-        <pre id="source" contenteditable="false" aria-readonly="true"></pre>
+        <textarea id="source" spellcheck="false"></textarea>
       </div>
       <div id="status">Waiting for diagram…</div>
     </div>
