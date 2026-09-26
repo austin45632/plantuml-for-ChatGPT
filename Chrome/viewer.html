@@ -39,7 +39,14 @@
       /* Wheel and pointer gestures belong to the viewer canvas. */
       pointer-events: none;
     }
-    #source { display: none; box-sizing: border-box; width: 100%; height: 100%; padding: 18px; margin: 0; overflow: auto; white-space: pre; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: inherit; color: inherit; }
+    #source {
+      display: none; position: absolute; inset: 0;
+      box-sizing: border-box; width: auto; height: auto;
+      max-width: none; max-height: none; padding: 18px; margin: 0;
+      overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+      font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: inherit; color: inherit;
+    }
     #status { position: absolute; inset: 0; display: grid; place-items: center; color: #656d76; pointer-events: none; }
     body.dark #toolbar { color: #e6edf3; }
   </style>

@@ -301,30 +301,30 @@ function renderDiagram(source, dark) {
     const SETTLE_MS = 80; // wait this long after last DOM mutation
 
     function readSize(svgEl) {
-      // Try, in order: getBBox (rendered geometry), width/height attrs,
-      // then viewBox.
+      // Prefer the SVG's declared intrinsic viewport. getBBox() can
+      // under-report right-side text in some PlantUML SVGs, which makes the
+      // standalone viewer allocate an iframe that clips the diagram.
       let w = 0, h = 0;
+      const wAttr = parseFloat(svgEl.getAttribute('width')) || 0;
+      const hAttr = parseFloat(svgEl.getAttribute('height')) || 0;
+      const vb = svgEl.getAttribute('viewBox');
+      const vbParts = vb ? vb.split(/[\s,]+/).map(Number) : [];
+      const vbW = vbParts.length === 4 && Number.isFinite(vbParts[2]) ? vbParts[2] : 0;
+      const vbH = vbParts.length === 4 && Number.isFinite(vbParts[3]) ? vbParts[3] : 0;
+      w = wAttr || vbW;
+      h = hAttr || vbH;
       try {
         const b = svgEl.getBBox();
-        w = b.width; h = b.height;
+        if (!w) w = b.width;
+        if (!h) h = b.height;
       } catch (e) { /* getBBox can throw if not laid out yet */ }
       if (!h) {
-        const wAttr = svgEl.getAttribute('width');
-        const hAttr = svgEl.getAttribute('height');
-        const wNum = wAttr && parseFloat(wAttr);
-        const hNum = hAttr && parseFloat(hAttr);
-        if (hNum) { w = wNum || w; h = hNum; }
-      }
-      if (!h) {
-        const vb = svgEl.getAttribute('viewBox');
-        if (vb) {
-          const parts = vb.split(/[\s,]+/).map(parseFloat);
-          if (parts.length === 4) { w = parts[2]; h = parts[3]; }
-        }
+        h = vbH || hAttr;
       }
       // Also peek at bounding-client for the actual rendered height
       // (useful when CSS scales the SVG down).
       const rect = svgEl.getBoundingClientRect();
+      if (!w) w = rect.width;
       return { w, h, rectH: rect.height, scrollH: output.scrollHeight };
     }
 

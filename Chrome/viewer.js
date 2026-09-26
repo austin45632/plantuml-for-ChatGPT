@@ -195,8 +195,10 @@ window.addEventListener('message', (event) => {
   if (data.type === 'PLANTUML_RESULT' && typeof data.width === 'number' && typeof data.height === 'number') {
     intrinsicWidth = data.width;
     intrinsicHeight = data.height;
-    frameWidth = Math.max(1, intrinsicWidth + 16);
-    frameHeight = Math.max(1, intrinsicHeight + 16);
+    // renderer.html has 8px padding on both sides. Keep a little extra
+    // room so the SVG's right/bottom edge is never clipped by the iframe.
+    frameWidth = Math.max(1, intrinsicWidth + 32);
+    frameHeight = Math.max(1, intrinsicHeight + 32);
     svgText = typeof data.svg === 'string' ? data.svg : null;
     setStatus('');
     fitDiagram();
