@@ -47,6 +47,14 @@
       height: auto;
       width: auto;
     }
+    /* Viewer diagrams are display-only. The outer viewer owns pan/zoom and
+       no SVG node should start an edit or navigation interaction. */
+    html.puml-viewer #plantuml-output,
+    html.puml-viewer #plantuml-output * {
+      user-select: none;
+      -webkit-user-modify: read-only;
+      pointer-events: none;
+    }
     .puml-error {
       color: #cf222e;
       background: #ffebe9;

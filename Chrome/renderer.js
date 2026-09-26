@@ -36,6 +36,10 @@ window.addEventListener('message', (event) => {
     const viewer = data.mode === 'viewer';
     document.documentElement.classList.toggle('puml-modal', modal);
     document.documentElement.classList.toggle('puml-viewer', viewer);
+    // The standalone viewer is display-only. Keep the renderer document
+    // explicitly read-only so a diagram cannot become editable if the
+    // iframe's event handling changes or the SVG contains interactive nodes.
+    document.documentElement.contentEditable = viewer ? 'false' : 'inherit';
     TRACE('PLANTUML_SET_MODE received, mode=' + data.mode +
       ' -> puml-modal=' + modal + ' puml-viewer=' + viewer);
     return;
