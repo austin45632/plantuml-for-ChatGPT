@@ -1,7 +1,7 @@
 // =====================================================================
-// PlantUML for GitHub - Content Script
+// PlantUML for ChatGPT - Content Script
 // =====================================================================
-// Runs on every github.com and *.ghe.com (GitHub Enterprise Cloud) page. Detects ```plantuml code blocks and
+// Runs on ChatGPT pages. Detects ```plantuml code blocks and
 // replaces them with a sandboxed iframe that renders the diagram
 // client-side using the TeaVM-compiled PlantUML engine.
 // =====================================================================
@@ -10,7 +10,7 @@
   'use strict';
 
   // ====== TRACE ======
-  const TRACE = (...args) => console.log('[PUML4GH][content]', ...args);
+  const TRACE = (...args) => console.log('[PUML4CHATGPT][content]', ...args);
   TRACE('content script loaded on', location.href);
   // ===================
 
@@ -18,16 +18,36 @@
   // chrome.runtime.getURL() produces a chrome-extension://<id>/renderer.html URL.
   const RENDERER_URL = chrome.runtime.getURL('renderer.html');
   const RENDERER_ORIGIN = new URL(RENDERER_URL).origin;
+  const VIEWER_URL = chrome.runtime.getURL('viewer.html');
   TRACE('RENDERER_URL =', RENDERER_URL, '| RENDERER_ORIGIN =', RENDERER_ORIGIN);
 
   // Marker class so we don't re-process the same block twice.
-  const PROCESSED_CLASS = 'plantuml-for-github-processed';
+  const PROCESSED_CLASS = 'plantuml-for-chatgpt-processed';
+  const pendingViewerRequests = new Map();
+  let viewerCounter = 0;
+
+  function findDiagramTitle(blockEl) {
+    const message = blockEl.closest(
+      '[data-message-author-role], [data-testid^="conversation-turn"], article'
+    );
+    if (!message) return 'PlantUML diagram';
+
+    let title = null;
+    message.querySelectorAll('h1, h2, h3, h4, h5, h6').forEach((heading) => {
+      if (heading.compareDocumentPosition(blockEl) & Node.DOCUMENT_POSITION_FOLLOWING) {
+        title = heading.textContent.trim();
+      }
+    });
+    return title ? title.slice(0, 160) : 'PlantUML diagram';
+  }
 
   // ------------------------------------------------------------------
-  // Detect dark mode from GitHub's <html data-color-mode> attribute.
+  // Detect dark mode from ChatGPT's theme attributes.
   // ------------------------------------------------------------------
   function isDarkMode() {
-    const mode = document.documentElement.dataset.colorMode;
+    const mode = document.documentElement.dataset.colorMode ||
+      document.documentElement.dataset.theme ||
+      (document.body && document.body.dataset.theme);
     if (mode === 'dark') return true;
     if (mode === 'light') return false;
     // 'auto' or unset: fall back to the user's OS preference.
@@ -38,9 +58,8 @@
   // Pull out just the `@startXXX ... @endXXX` substring from a block of
   // text, based solely on PlantUML's own delimiters (@startuml,
   // @startmindmap, @startgantt, @startsalt, ...), or null if none is
-  // found. Used as a fallback for code blocks GitHub renders with no
-  // language marker at all -- see the sel4 comment below for why that
-  // happens.
+  // found. Used as a fallback for code blocks ChatGPT renders with no
+  // language marker at all.
   //
   // This does NOT require @startXXX to be the first line: the untagged
   // <pre> can (and typically does) contain surrounding noise -- e.g. the
@@ -58,8 +77,7 @@
   // rest is silently ignored. This is an intentional scope decision, not
   // an oversight -- the idiomatic AsciiDoc way to have several diagrams
   // is one `[plantuml]` / `----` block per diagram, which already works
-  // correctly since each becomes its own separate <pre>. See the sel4
-  // TRACE below for a debug hint when this limitation is hit.
+  // correctly since each becomes its own separate <pre>.
   // ------------------------------------------------------------------
   function extractPlantUMLSource(text) {
     const t = text || '';
@@ -74,132 +92,79 @@
   }
 
   // Extracted `@startXXX ... @endXXX` source for blocks discovered by the
-  // content-sniffing fallback (sel4), keyed by the <pre> element itself --
+  // content-sniffing fallback, keyed by the <pre> element itself --
   // populated in findPlantUMLBlocks, consumed by extractSource so we
   // render only the real PlantUML source and not the surrounding noise.
   const sniffedSource = new WeakMap();
 
   // ------------------------------------------------------------------
-  // Find all ```plantuml code blocks on the current page.
-  //
-  // GitHub renders fenced code blocks as either:
-  //   <div class="highlight highlight-source-plantuml">...</div>
-  //   <pre lang="plantuml">...</pre>
-  // depending on the context (README, issue, PR, discussion).
-  // We handle both, plus a generic fallback.
+  // Find PlantUML code blocks inside rendered ChatGPT messages. The
+  // message semantics are more stable than ChatGPT's presentation classes.
   // ------------------------------------------------------------------
   function findPlantUMLBlocks(root) {
     const blocks = [];
+    const aliases = ['wsd', 'plantuml', 'puml'];
+    const languageSelector = aliases.flatMap((language) => [
+      `pre[lang="${language}"]`,
+      `pre[data-language="${language}"]`,
+      `pre.language-${language}`,
+      `code.language-${language}`,
+      `code[data-language="${language}"]`
+    ]).join(', ');
 
-    // GitHub uses Linguist to classify code-block languages. PlantUML is
-    // classified under several aliases:
-    //   - 'wsd' (Web Sequence Diagrams) -- the canonical Linguist name
-    //   - 'plantuml'
-    //   - 'puml'
-    // The wrapper class is therefore one of:
-    //   highlight-source-wsd / highlight-source-plantuml / highlight-source-puml
-    const LANG_ALIASES = ['wsd', 'plantuml', 'puml'];
-    const wrapperSelector = LANG_ALIASES
-      .map((l) => 'div.highlight-source-' + l)
-      .join(', ');
-    const preLangSelector = LANG_ALIASES
-      .map((l) => 'pre[lang="' + l + '"]')
-      .join(', ');
-    const codeLangSelector = LANG_ALIASES
-      .map((l) => 'code.language-' + l)
-      .join(', ');
+    const addCandidate = (element) => {
+      // Current ChatGPT renders some code blocks without <pre>; in that
+      // case the <code> element itself is still a safe replacement target.
+      const block = element.matches('pre') || element.matches('code')
+        ? element
+        : element.closest('pre, code');
+      if (!block || block.classList.contains(PROCESSED_CLASS) ||
+          !isInsideChatMessage(block) || blocks.includes(block)) return;
+      blocks.push(block);
+    };
 
-    // README rendering: <div class="highlight highlight-source-wsd"><pre>...</pre></div>
-    const sel1 = root.querySelectorAll(wrapperSelector);
-    sel1.forEach((el) => {
-      if (!el.classList.contains(PROCESSED_CLASS)) blocks.push(el);
-    });
+    root.querySelectorAll(languageSelector).forEach(addCandidate);
 
-    // Issue / PR / discussion comment rendering: <pre lang="wsd">...</pre>
-    const sel2 = root.querySelectorAll(preLangSelector);
-    sel2.forEach((el) => {
-      if (!el.classList.contains(PROCESSED_CLASS)) blocks.push(el);
-    });
-
-    // Some markdown renderers wrap code blocks differently.
-    // Catch <code class="language-wsd"> that aren't already covered above.
-    const sel3 = root.querySelectorAll(codeLangSelector);
-    sel3.forEach((codeEl) => {
-      const pre = codeEl.closest('pre');
-      if (pre && !pre.classList.contains(PROCESSED_CLASS) &&
-          !pre.matches(preLangSelector) &&
-          !pre.closest(wrapperSelector)) {
-        blocks.push(pre);
-      }
-    });
-
-    // AsciiDoc fallback: `[plantuml]` delimited blocks (the syntax used by
-    // the asciidoctor-diagram Ruby gem, e.g. in a README.adoc) --
-    //   [plantuml]
-    //   ----
-    //   @startuml
-    //   ...
-    //   @enduml
-    //   ----
-    // GitHub renders .adoc files with plain Asciidoctor and does *not*
-    // load the asciidoctor-diagram extension, so the `[plantuml]` style
-    // is silently dropped and the block comes out as a completely bare,
-    // languageless
-    //   <div class="listingblock"><div class="content"><pre>...</pre></div></div>
-    // -- no class, no `lang`, no `data-lang`, nothing to select on
-    // (verified empirically with @asciidoctor/core, the same engine
-    // GitHub's Ruby `asciidoctor` gem is transpiled from). The only way
-    // to recognize it is to look at the text itself: PlantUML sources
-    // are self-delimited by `@startXXX` / `@endXXX` markers, so any
-    // untagged <pre> whose content matches that pattern is treated as
-    // PlantUML. This also means a languageless Markdown ``` fence (no
-    // `plantuml` after the backticks) works the same way, which is a
-    // reasonable bonus rather than a problem.
-    //
-    // Writing `[source,plantuml]` instead of `[plantuml]` already works
-    // without this fallback: Asciidoctor's "source" style keeps the
-    // language as `<code class="language-plantuml">`, which sel3 above
-    // already matches.
-    const anyLangCodeSelector = 'code[class*="language-"]';
-    const sel4 = [];
-    root.querySelectorAll('pre').forEach((pre) => {
-      if (pre.classList.contains(PROCESSED_CLASS)) return;
-      if (pre.matches(preLangSelector)) return;
-      if (pre.closest(wrapperSelector)) return;
-      if (pre.querySelector(anyLangCodeSelector)) return; // already labeled with some language
-      const extracted = extractPlantUMLSource(pre.textContent);
+    // ChatGPT may render an unlabelled fenced block as a plain <pre> or
+    // <code> element.
+    // Require a complete PlantUML delimiter pair to avoid prose matches.
+    root.querySelectorAll('pre, code').forEach((element) => {
+      if (element.matches('code') && element.closest('pre')) return;
+      if (element.classList.contains(PROCESSED_CLASS) ||
+          !isInsideChatMessage(element) || element.matches(languageSelector) ||
+          element.querySelector('code[class*="language-"]')) return;
+      const extracted = extractPlantUMLSource(element.textContent);
       if (extracted === null) return;
-      // Debug hint for the known "only the first pair" limitation (see the
-      // extractPlantUMLSource comment above): a second @startXXX marker
-      // anywhere in the block means part of it is being silently dropped.
-      if ((pre.textContent.match(/^[ \t]*@start\w+\b/gm) || []).length > 1) {
-        TRACE('sel4: multiple @startXXX markers found in one untagged block; ' +
-              'only the first @start.../@end... pair is rendered', pre);
-      }
-      sniffedSource.set(pre, extracted);
-      sel4.push(pre);
-      blocks.push(pre);
+      sniffedSource.set(element, extracted);
+      if (!blocks.includes(element)) blocks.push(element);
     });
 
-    TRACE('findPlantUMLBlocks: sel1(' + wrapperSelector + ')=' + sel1.length +
-          ' sel2(' + preLangSelector + ')=' + sel2.length +
-          ' sel3(' + codeLangSelector + ')=' + sel3.length +
-          ' sel4(untagged @startXXX/@endXXX)=' + sel4.length +
-          ' -> total new blocks=' + blocks.length);
+    TRACE('findPlantUMLBlocks: total new blocks=' + blocks.length);
     return blocks;
+  }
+
+  function isInsideChatMessage(element) {
+    if (element.closest('textarea, [contenteditable="true"], form')) return false;
+    // ChatGPT has changed message wrapper semantics several times. Prefer
+    // known message roots, but fall back to the document body because this
+    // content script only runs on chatgpt.com and the composer is excluded
+    // explicitly above.
+    return Boolean(element.closest(
+      '[data-message-author-role], [data-testid^="conversation-turn"], article, main, body'
+    ));
   }
 
   // ------------------------------------------------------------------
   // Extract the PlantUML source text from a code block element.
   // We use textContent to get the raw text without any syntax-highlight
-  // markup that GitHub may have injected.
+  // markup that the host page may have injected.
   // ------------------------------------------------------------------
   function extractSource(blockEl) {
-    // Blocks found by the content-sniffing fallback (sel4) may have extra
+    // Blocks found by the content-sniffing fallback may have extra
     // noise around the actual PlantUML source (see extractPlantUMLSource);
     // use the pre-extracted substring for those instead of the raw text.
     if (sniffedSource.has(blockEl)) return sniffedSource.get(blockEl);
-    // For <div class="highlight-source-plantuml"><pre>, get inner <pre> text.
+    // For a wrapper containing <pre>, get the inner <pre> text.
     const pre = blockEl.matches('pre') ? blockEl : blockEl.querySelector('pre');
     if (!pre) return blockEl.textContent.trim();
     return pre.textContent.trim();
@@ -210,7 +175,7 @@
   // We use sandbox="allow-scripts" — no allow-same-origin — so the
   // iframe is treated as a unique opaque origin (defense in depth).
   // ------------------------------------------------------------------
-  // Theme palettes — hard-coded so they don't depend on GitHub's CSS
+  // Theme palettes — hard-coded so they don't depend on the host page's CSS
   // variables being defined on the current page.
   const THEME = {
     light: {
@@ -231,7 +196,7 @@
     const t = dark ? THEME.dark : THEME.light;
 
     const wrapper = document.createElement('div');
-    wrapper.className = 'plantuml-for-github-wrapper';
+    wrapper.className = 'plantuml-for-chatgpt-wrapper';
     wrapper.style.cssText =
       'margin: 16px 0; padding: 0; ' +
       'border: 1px solid ' + t.borderCol + '; ' +
@@ -253,7 +218,7 @@
     // shows the action the user can take next ("view source" = code icon).
     const toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';
-    toggleBtn.className = 'plantuml-for-github-toggle';
+    toggleBtn.className = 'plantuml-for-chatgpt-toggle';
     toggleBtn.setAttribute('aria-label', 'Show source');
     toggleBtn.title = 'Show source';
     toggleBtn.style.cssText =
@@ -294,6 +259,10 @@
       '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
       '<path d="M11.013 1.427a1.75 1.75 0 0 1 2.474 0l1.086 1.086a1.75 1.75 0 0 1 0 2.474l-8.61 8.61c-.21.21-.47.364-.756.445l-3.251.93a.75.75 0 0 1-.927-.928l.929-3.25c.081-.286.235-.547.445-.758l8.61-8.61Zm.176 4.823L9.75 4.81l-6.286 6.287a.253.253 0 0 0-.064.108l-.558 1.953 1.953-.558a.253.253 0 0 0 .108-.064Zm1.238-3.763a.25.25 0 0 0-.354 0L10.811 3.75l1.439 1.44 1.263-1.263a.25.25 0 0 0 0-.354Z"/>' +
       '</svg>';
+    const ICON_OPEN =
+      '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+      '<path d="M10.5 1.5h4v4h-1.5V4.06l-5.47 5.47-1.06-1.06 5.47-5.47H10.5V1.5ZM3 3h4v1.5H4.5v7h7V10H13v3a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/>' +
+      '</svg>';
     toggleBtn.innerHTML = ICON_CODE;
 
     // Second header button: copy the rendered diagram to the clipboard
@@ -302,7 +271,7 @@
     // resulting blob to the clipboard from this content-script context.
     const bitmapBtn = document.createElement('button');
     bitmapBtn.type = 'button';
-    bitmapBtn.className = 'plantuml-for-github-copy-bitmap';
+    bitmapBtn.className = 'plantuml-for-chatgpt-copy-bitmap';
     bitmapBtn.setAttribute('aria-label', 'Copy diagram as bitmap');
     bitmapBtn.title = 'Copy diagram as bitmap';
     bitmapBtn.style.cssText =
@@ -324,7 +293,7 @@
     // modal; the actual editor will be wired up later.
     const editBtn = document.createElement('button');
     editBtn.type = 'button';
-    editBtn.className = 'plantuml-for-github-edit-draft';
+    editBtn.className = 'plantuml-for-chatgpt-edit-draft';
     editBtn.setAttribute('aria-label', 'Edit as draft');
     editBtn.title = 'Edit as draft';
     editBtn.style.cssText =
@@ -341,10 +310,29 @@
     });
     editBtn.innerHTML = ICON_PENCIL;
 
+    const viewerBtn = document.createElement('button');
+    viewerBtn.type = 'button';
+    viewerBtn.className = 'plantuml-for-chatgpt-open-viewer';
+    viewerBtn.setAttribute('aria-label', 'Open diagram viewer');
+    viewerBtn.title = 'Open diagram viewer';
+    viewerBtn.style.cssText =
+      'display: inline-flex; align-items: center; justify-content: center; ' +
+      'width: 22px; height: 22px; padding: 0; margin: 0 4px 0 0; ' +
+      'background: transparent; border: 1px solid transparent; ' +
+      'border-radius: 4px; cursor: pointer; color: ' + t.wrapperFg + ';';
+    viewerBtn.addEventListener('mouseenter', () => {
+      viewerBtn.style.background = t.borderCol;
+    });
+    viewerBtn.addEventListener('mouseleave', () => {
+      viewerBtn.style.background = 'transparent';
+    });
+    viewerBtn.innerHTML = ICON_OPEN;
+
     // Toggle on the LEFT, then bitmap-copy, then edit-as-draft, then badge on the RIGHT.
     header.appendChild(toggleBtn);
     header.appendChild(bitmapBtn);
     header.appendChild(editBtn);
+    header.appendChild(viewerBtn);
     header.appendChild(badge);
     // With both children left-aligned, switch the header from
     // space-between to flex-start so they sit next to each other.
@@ -360,7 +348,7 @@
     iframe.setAttribute('title', 'PlantUML diagram');
 
     wrapper.appendChild(iframe);
-    return { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, theme: t, icons: { code: ICON_CODE, eye: ICON_EYE, image: ICON_IMAGE, pencil: ICON_PENCIL } };
+    return { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, viewerBtn, theme: t, icons: { code: ICON_CODE, eye: ICON_EYE, image: ICON_IMAGE, pencil: ICON_PENCIL, open: ICON_OPEN } };
   }
 
   // ------------------------------------------------------------------
@@ -508,15 +496,16 @@
 
     const requestId = `puml-${++blockCounter}-${Date.now()}`;
     const dark = isDarkMode();
-    const { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, theme: t, icons } = buildIframe(requestId, dark);
+    const { wrapper, iframe, toggleBtn, bitmapBtn, editBtn, viewerBtn, theme: t, icons } = buildIframe(requestId, dark);
+    const title = findDiagramTitle(blockEl);
 
     // Insert the wrapper *before* the original block, then move the
-    // original block INSIDE the wrapper (after the iframe). This keeps
-    // GitHub's syntax-highlighting intact and lets us toggle visibility
+    // original block INSIDE the wrapper (after the iframe). This preserves
+    // the host page's source styling and lets us toggle visibility
     // between the rendered diagram and the original source.
     blockEl.parentNode.insertBefore(wrapper, blockEl);
     wrapper.appendChild(blockEl);
-    // The original block already has padding/background from GitHub.
+    // The original block already has padding/background from the host page.
     // Strip its outer margin and rounded corners so it sits flush inside
     // our wrapper, and hide it by default (diagram view is the default).
     blockEl.style.margin = '0';
@@ -525,7 +514,7 @@
     blockEl.style.display = 'none';
     TRACE('processBlock: iframe inserted, requestId=' + requestId + ' dark=' + dark);
 
-    // Wire the view-toggle: SVG diagram <-> GitHub-coloured source.
+    // Wire the view-toggle: SVG diagram <-> host-styled source.
     let showingSource = false;
     toggleBtn.addEventListener('click', () => {
       showingSource = !showingSource;
@@ -543,6 +532,57 @@
         toggleBtn.title = 'Show source';
       }
       TRACE('toggle clicked, showingSource=' + showingSource);
+    });
+
+    viewerBtn.addEventListener('click', () => {
+      const viewerRequestId = `viewer-${++viewerCounter}-${Date.now()}`;
+      // Only the one-time request id is put in the fragment. The PlantUML
+      // source remains in memory and is transferred by postMessage.
+      const viewerUrl = `${VIEWER_URL}#requestId=${encodeURIComponent(viewerRequestId)}`;
+      const viewerWindow = window.open(viewerUrl, '_blank');
+      if (!viewerWindow) {
+        viewerBtn.title = 'Unable to open diagram viewer; allow pop-ups for ChatGPT';
+        TRACE('viewer popup was blocked, requestId=' + viewerRequestId);
+        return;
+      }
+
+      const initMessage = {
+        type: 'PLANTUML_VIEWER_INIT',
+        requestId: viewerRequestId,
+        source,
+        dark,
+        title
+      };
+      const initTimer = setInterval(() => {
+        const pending = pendingViewerRequests.get(viewerRequestId);
+        if (!pending) return;
+        try {
+          // window.open() initially returns an about:blank window whose
+          // origin is still ChatGPT while viewer.html is loading. Use '*'
+          // for this bootstrap message; viewer.js authenticates it with the
+          // ChatGPT origin and requestId before accepting the source.
+          pending.viewerWindow.postMessage(initMessage, '*');
+        } catch (error) {
+          TRACE('viewer init retry failed, requestId=' + viewerRequestId);
+        }
+      }, 100);
+      pendingViewerRequests.set(viewerRequestId, {
+        viewerWindow,
+        initTimer,
+        initMessage,
+        timeoutId: setTimeout(() => {
+          clearInterval(initTimer);
+          pendingViewerRequests.delete(viewerRequestId);
+          TRACE('viewer handshake timed out, requestId=' + viewerRequestId);
+        }, 10000)
+      });
+      // Try once immediately as well; the interval covers the case where
+      // the new extension page has not finished loading yet.
+      try {
+        viewerWindow.postMessage(initMessage, '*');
+      } catch (error) {
+        TRACE('viewer init initial post failed, requestId=' + viewerRequestId);
+      }
     });
 
     // ------------------------------------------------------------------
@@ -636,7 +676,7 @@
 
       // Backdrop covers the whole viewport and dims the page behind.
       const backdrop = document.createElement('div');
-      backdrop.className = 'plantuml-for-github-edit-backdrop';
+      backdrop.className = 'plantuml-for-chatgpt-edit-backdrop';
       backdrop.style.cssText =
         'position: fixed; inset: 0; z-index: 2147483647; ' +
         'background: rgba(0, 0, 0, 0.5); ' +
@@ -669,7 +709,7 @@
       // main wrapper's iframe.
       const modalBitmapBtn = document.createElement('button');
       modalBitmapBtn.type = 'button';
-      modalBitmapBtn.className = 'plantuml-for-github-modal-copy-bitmap';
+      modalBitmapBtn.className = 'plantuml-for-chatgpt-modal-copy-bitmap';
       modalBitmapBtn.setAttribute('aria-label', 'Copy diagram as bitmap');
       modalBitmapBtn.title = 'Copy diagram as bitmap';
       modalBitmapBtn.style.cssText =
@@ -1011,10 +1051,31 @@
 
     if (!data || typeof data !== 'object') return;
 
+    if (data.type === 'PLANTUML_VIEWER_READY') {
+      if ((event.origin !== RENDERER_ORIGIN && event.origin !== 'null') ||
+          typeof data.requestId !== 'string') return;
+      const pending = pendingViewerRequests.get(data.requestId);
+      if (!pending) return;
+      // Chrome may expose either a different isolated-world WindowProxy or
+      // a null source for an extension-page message. The random requestId,
+      // extension/opaque origin check, and the popup WindowProxy captured by
+      // window.open() together identify the intended viewer.
+      if (event.source && event.source !== pending.viewerWindow) {
+        TRACE('viewer source proxy differs; replying to captured viewer window');
+      }
+      clearTimeout(pending.timeoutId);
+      clearInterval(pending.initTimer);
+      pendingViewerRequests.delete(data.requestId);
+      pending.viewerWindow.postMessage({
+        ...pending.initMessage
+      }, RENDERER_ORIGIN);
+      return;
+    }
+
     // Handle context-menu actions: the renderer iframe asks us to perform
     // a clipboard operation on its behalf (because the sandboxed iframe
     // can't reach navigator.clipboard, and the user gesture must originate
-    // from a real github.com origin). The click in the menu propagates a
+    // from the host page origin). The click in the menu propagates a
     // user activation here, so navigator.clipboard.write() will succeed.
     if (data.type === 'PLANTUML_CTX_MENU_ACTION') {
       // Find the iframe that posted this message. Both inline and modal
@@ -1099,63 +1160,29 @@
   // ------------------------------------------------------------------
   // Initial scan + observe DOM mutations.
   //
-  // GitHub is a SPA: it navigates between pages and injects new content
-  // (e.g. loading more comments) without a full page reload. A
-  // MutationObserver lets us catch blocks added after initial load.
+  // ChatGPT is a SPA and streams messages into the DOM. A quiet-period
+  // debounce lets us wait until a response has stopped changing before
+  // replacing its code blocks.
   // ------------------------------------------------------------------
   function scanAndProcess(root) {
     const blocks = findPlantUMLBlocks(root);
     blocks.forEach(processBlock);
   }
 
-  // Initial scan.
-  TRACE('starting initial scan');
-  scanAndProcess(document.body);
-  TRACE('initial scan done');
+  // Initial content may still be streaming, so use the same quiet period.
 
-  // ====== DIAGNOSTIC: dump every <pre> / <code> that could be a plantuml block ======
-  setTimeout(() => {
-    TRACE('=== DIAGNOSTIC DUMP ===');
-    const allPre = document.querySelectorAll('pre');
-    TRACE('total <pre> elements on page: ' + allPre.length);
-    allPre.forEach((pre, i) => {
-      const text = pre.textContent || '';
-      const looksPuml = text.includes('@startuml') || text.includes('@enduml');
-      if (looksPuml) {
-        TRACE('  <pre> #' + i + ' LOOKS LIKE PLANTUML:');
-        TRACE('    tag=' + pre.tagName +
-              ' class="' + pre.className + '"' +
-              ' lang="' + (pre.getAttribute('lang') || '') + '"' +
-              ' data-lang="' + (pre.getAttribute('data-lang') || '') + '"');
-        TRACE('    parent tag=' + (pre.parentElement && pre.parentElement.tagName) +
-              ' parent.class="' + (pre.parentElement && pre.parentElement.className) + '"');
-        const code = pre.querySelector('code');
-        if (code) {
-          TRACE('    inner <code> class="' + code.className + '"');
-        }
-        TRACE('    outerHTML (first 300 chars): ' + pre.outerHTML.slice(0, 300));
-      }
-    });
-    // Also dump every element with a class containing "plantuml" or "puml"
-    const fuzzy = document.querySelectorAll('[class*="plantuml"], [class*="puml"], [lang*="plantuml"]');
-    TRACE('elements with class/lang matching plantuml|puml: ' + fuzzy.length);
-    fuzzy.forEach((el, i) => {
-      TRACE('  fuzzy #' + i + ' tag=' + el.tagName + ' class="' + el.className + '" lang="' + (el.getAttribute('lang') || '') + '"');
-    });
-    TRACE('=== END DIAGNOSTIC ===');
-  }, 1500);
-  // ===================================================================================
+  let scanTimer = null;
+  const scheduleScan = () => {
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(() => scanAndProcess(document.body), 1000);
+  };
 
-  // Watch for dynamically added content.
-  const observer = new MutationObserver((mutations) => {
-    for (const m of mutations) {
-      for (const node of m.addedNodes) {
-        if (node.nodeType === Node.ELEMENT_NODE) {
-          scanAndProcess(node);
-        }
-      }
-    }
+  const observer = new MutationObserver(scheduleScan);
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true
   });
-  observer.observe(document.body, { childList: true, subtree: true });
+  scheduleScan();
   TRACE('MutationObserver attached');
 })();

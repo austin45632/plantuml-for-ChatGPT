@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PlantUML viewer</title>
+  <style>
+    :root { color-scheme: light; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body {
+      background: #f6f8fa;
+      color: #1f2328;
+      font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    body.dark { color-scheme: dark; background: #0d1117; color: #e6edf3; }
+    #app { display: flex; flex-direction: column; width: 100%; height: 100%; }
+    #toolbar {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      min-height: 42px; padding: 0 10px;
+      border-bottom: 1px solid #d0d7de; background: #ffffff;
+    }
+    body.dark #toolbar { border-color: #30363d; background: #161b22; }
+    #title { flex: 1 1 180px; min-width: 120px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button {
+      border: 1px solid #d0d7de; border-radius: 5px; background: #ffffff;
+      color: inherit; cursor: pointer; padding: 5px 9px;
+    }
+    button:hover { background: #f3f4f6; }
+    body.dark button { border-color: #30363d; background: #21262d; }
+    body.dark button:hover { background: #30363d; }
+    button:disabled { cursor: default; opacity: .55; }
+    #stage { position: relative; flex: 1; overflow: hidden; background: #ffffff; }
+    body.dark #stage { background: #0d1117; }
+    #canvas { position: absolute; inset: 0; overflow: hidden; cursor: grab; }
+    #canvas.dragging { cursor: grabbing; }
+    #renderer {
+      position: absolute; left: 0; top: 0; border: 0;
+      transform-origin: 0 0; background: transparent;
+      /* Wheel and pointer gestures belong to the viewer canvas. */
+      pointer-events: none;
+    }
+    #source { display: none; box-sizing: border-box; width: 100%; height: 100%; padding: 18px; margin: 0; overflow: auto; white-space: pre; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: inherit; color: inherit; }
+    #status { position: absolute; inset: 0; display: grid; place-items: center; color: #656d76; pointer-events: none; }
+    body.dark #toolbar { color: #e6edf3; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="toolbar">
+      <div id="title">PlantUML diagram</div>
+      <button id="fit" type="button">Fit</button>
+      <button id="actual" type="button">100%</button>
+      <button id="zoomOut" type="button" aria-label="Zoom out">−</button>
+      <button id="zoomIn" type="button" aria-label="Zoom in">+</button>
+      <button id="reset" type="button">Reset</button>
+      <button id="sourceToggle" type="button">Show source</button>
+      <button id="copySvg" type="button">Copy SVG</button>
+      <button id="copyPng" type="button">Copy PNG</button>
+      <button id="close" type="button">Close</button>
+    </div>
+    <div id="stage">
+      <div id="canvas">
+        <iframe id="renderer" title="PlantUML diagram"></iframe>
+        <pre id="source"></pre>
+      </div>
+      <div id="status">Waiting for diagram…</div>
+    </div>
+  </div>
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>

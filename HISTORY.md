@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Converted the Chrome build from GitHub-only to ChatGPT-only (`chatgpt.com`).
+- Added quiet-period detection for completed ChatGPT messages and retained the
+  local renderer, source toggle, copy actions, draft editor, and context menu.
+- Added Chrome Web Store listing and testing material under `store/`.
+
 All notable changes to **PlantUML for GitHub** are documented here.
 The project is published as two browser extensions (Chrome and Firefox)
 that share the same version number from `0.2.2` onward.

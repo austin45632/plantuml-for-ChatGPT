@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "PlantUML for GitHub",
-  "version": "0.3.2",
-  "description": "Renders plantuml code blocks directly on GitHub pages using the client-side TeaVM-compiled PlantUML engine.",
+  "name": "PlantUML for ChatGPT",
+  "version": "0.4.0",
+  "description": "Renders PlantUML code blocks directly in ChatGPT conversations using a local PlantUML engine.",
   "author": "Arnaud Roques",
   "homepage_url": "https://github.com/plantuml/plantuml",
 
@@ -15,10 +15,7 @@
 
   "content_scripts": [
     {
-      "matches": [
-        "https://github.com/*",
-        "https://*.ghe.com/*"
-      ],
+      "matches": ["https://chatgpt.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
     }
@@ -29,6 +26,8 @@
       "resources": [
         "renderer.html",
         "renderer.js",
+        "viewer.html",
+        "viewer.js",
         "vendor/plantuml.js",
         "adaml.min.js",
         "archimate.min.js",
@@ -47,7 +46,7 @@
         "kubernetes.min.js",
         "osa2.min.js"
       ],
-      "matches": ["https://github.com/*", "https://*.ghe.com/*"]
+      "matches": ["https://chatgpt.com/*"]
     }
   ],
 

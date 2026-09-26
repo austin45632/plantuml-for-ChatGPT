@@ -1,5 +1,5 @@
 """
-Build a Chrome-compatible ZIP for the plantuml-for-github extension.
+Build a Chrome-compatible ZIP for the plantuml-for-chatgpt extension.
 
 Why Python and not PowerShell's Compress-Archive:
   Compress-Archive on some Windows builds writes path separators as
@@ -31,7 +31,7 @@ with open(CHROME_DIR / "manifest.json", "r", encoding="utf-8") as f:
     manifest = json.load(f)
 version = manifest["version"]
 # Output the ZIP at the repo root, next to the Chrome/ and Firefox/ dirs.
-OUT = ROOT / f"plantuml-for-github-chrome-{version}.zip"
+OUT = ROOT / f"plantuml-for-chatgpt-chrome-{version}.zip"
 
 # Exact list of files to ship, as (arcname inside ZIP -> source path).
 # Listing every file explicitly avoids accidentally bundling leftover
@@ -41,6 +41,8 @@ FILES = {
     "content.js":            CHROME_DIR / "content.js",
     "renderer.html":         CHROME_DIR / "renderer.html",
     "renderer.js":           CHROME_DIR / "renderer.js",
+    "viewer.html":           CHROME_DIR / "viewer.html",
+    "viewer.js":             CHROME_DIR / "viewer.js",
     "icons/icon16.png":      CHROME_DIR / "icons" / "icon16.png",
     "icons/icon48.png":      CHROME_DIR / "icons" / "icon48.png",
     "icons/icon128.png":     CHROME_DIR / "icons" / "icon128.png",

@@ -1,5 +1,5 @@
 // =====================================================================
-// PlantUML for GitHub - Renderer (sandbox iframe)
+// PlantUML for ChatGPT - Renderer (sandbox iframe)
 // =====================================================================
 // Runs inside the sandboxed iframe. Loads the TeaVM-compiled PlantUML
 // engine, listens for PLANTUML_RENDER messages from the parent page,
@@ -9,7 +9,7 @@
 import { render } from './vendor/plantuml.js';
 
 // ====== TRACE ======
-const TRACE = (...args) => console.log('[PUML4GH][renderer]', ...args);
+const TRACE = (...args) => console.log('[PUML4CHATGPT][renderer]', ...args);
 TRACE('renderer.js module loaded, location=', location.href);
 TRACE('render import =', typeof render);
 // ===================
@@ -30,13 +30,14 @@ window.addEventListener('message', (event) => {
     return;
   }
   if (data.type === 'PLANTUML_SET_MODE') {
-    // Toggle modal layout mode: lets the SVG keep its intrinsic size and
-    // makes the renderer body scroll in both axes when the diagram is
-    // larger than the iframe. Sent once by the parent (the modal) right
-    // after the iframe loads.
+    // Toggle layout modes. Modal keeps its own scrollbars; viewer delegates
+    // zooming and panning to the outer viewer canvas instead.
     const modal = data.mode === 'modal';
+    const viewer = data.mode === 'viewer';
     document.documentElement.classList.toggle('puml-modal', modal);
-    TRACE('PLANTUML_SET_MODE received, mode=' + data.mode + ' -> puml-modal=' + modal);
+    document.documentElement.classList.toggle('puml-viewer', viewer);
+    TRACE('PLANTUML_SET_MODE received, mode=' + data.mode +
+      ' -> puml-modal=' + modal + ' puml-viewer=' + viewer);
     return;
   }
   if (data.type === 'PLANTUML_COPY_BITMAP') {
@@ -68,7 +69,7 @@ window.addEventListener('message', (event) => {
 
   if (data.type === 'PLANTUML_COPY_SVG') {
     // The parent (content script) asks for the SVG markup so it can
-    // write it to the clipboard from a real github.com origin -- the
+    // write it to the clipboard from the host page's origin -- the
     // sandboxed iframe cannot reach navigator.clipboard itself.
     TRACE('PLANTUML_COPY_SVG received from origin=' + event.origin +
           ' requestId=' + data.requestId);
@@ -110,18 +111,19 @@ window.addEventListener('message', (event) => {
   const dark = options && options.dark === true;
 
   // Apply the theme to the iframe's root element so the background
-  // matches GitHub's color mode. PlantUML itself draws the diagram in
+  // matches the host page's color mode. PlantUML itself draws the diagram in
   // dark/light per the same flag; this just paints the canvas behind it.
   document.documentElement.classList.toggle('puml-dark', dark);
   TRACE('theme applied: puml-dark=' + dark);
 
   renderDiagram(source, dark)
-    .then(({ svg, height }) => {
-      TRACE('renderDiagram resolved, svg.len=' + svg.length + ' height=' + height);
+    .then(({ svg, width, height }) => {
+      TRACE('renderDiagram resolved, svg.len=' + svg.length + ' width=' + width + ' height=' + height);
       event.source.postMessage({
         type: 'PLANTUML_RESULT',
         requestId,
         svg,
+        width,
         height
       }, event.origin);
     })
@@ -141,7 +143,7 @@ TRACE('message listener attached');
 // Currently provides "Copy as bitmap" and "Copy as SVG". Clicks
 // post a PLANTUML_CTX_MENU_ACTION message to the parent (content
 // script), which performs the actual clipboard write from a real
-// github.com origin.
+// host-page origin.
 //
 // Implemented inside the renderer iframe (rather than the parent
 // content script) so positioning is straightforward and the menu
@@ -189,7 +191,7 @@ function showContextMenu(clientX, clientY) {
 
   // Menu entries. Wiring: clicking a menu item posts a message to
   // the parent (content script), which performs the actual clipboard
-  // write from a real github.com origin. The user gesture from the
+  // write from the host page origin. The user gesture from the
   // click propagates across the iframe boundary via the user-activation
   // model, so navigator.clipboard.write() succeeds in the parent.
   const ENTRIES = [
@@ -344,7 +346,7 @@ function renderDiagram(source, dark) {
       TRACE('finish: svg sizes', sizes,
             ' docH=' + docH + ' bodyH=' + bodyH +
             ' -> chosen height=' + measured);
-      resolve({ svg: output.innerHTML, height: Math.ceil(measured) });
+      resolve({ svg: output.innerHTML, width: Math.ceil(sizes.w || 0), height: Math.ceil(measured) });
     }
 
     const observer = new MutationObserver(() => {
@@ -426,7 +428,7 @@ function serializeSvg() {
 // sandboxed without allow-same-origin, so we can't call
 // navigator.clipboard.write() from here -- we just hand the blob
 // back to the parent (content script) via postMessage and let it
-// do the clipboard write from a real github.com origin.
+// do the clipboard write from the host page origin.
 // ------------------------------------------------------------------
 async function svgToPngBlob() {
   const svg = output.querySelector('svg');

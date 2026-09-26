@@ -37,6 +37,16 @@
       height: auto;
       width: auto;
     }
+    /* Standalone viewer mode: the outer viewer owns zoom and pan, so the
+       sandbox document must not create a second set of scrollbars. */
+    html.puml-viewer, html.puml-viewer body {
+      overflow: hidden;
+    }
+    html.puml-viewer #plantuml-output svg {
+      max-width: none;
+      height: auto;
+      width: auto;
+    }
     .puml-error {
       color: #cf222e;
       background: #ffebe9;
@@ -55,7 +65,7 @@
        Context menu shown on right-click over the rendered SVG.
        Positioned absolutely by renderer.js; styles only define look.
        Light and dark variants follow the same palette as the wrapper
-       header in content.js (GitHub Primer colors).
+       header in content.js (neutral light/dark colors).
        ------------------------------------------------------------------ */
     .puml-ctx-menu {
       position: fixed;
