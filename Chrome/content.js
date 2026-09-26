@@ -26,6 +26,68 @@
   const pendingViewerRequests = new Map();
   let viewerCounter = 0;
 
+  function openStandaloneViewer(viewerRequestId, initMessage, viewerBtn) {
+    // Chrome versions without the Split View API retain the original viewer
+    // behavior. The source is transferred only through postMessage.
+    const viewerUrl = `${VIEWER_URL}#requestId=${encodeURIComponent(viewerRequestId)}`;
+    const viewerWindow = window.open(viewerUrl, '_blank');
+    if (!viewerWindow) {
+      viewerBtn.title = 'Unable to open diagram viewer; allow pop-ups for ChatGPT';
+      TRACE('viewer popup was blocked, requestId=' + viewerRequestId);
+      return;
+    }
+
+    const initTimer = setInterval(() => {
+      const pending = pendingViewerRequests.get(viewerRequestId);
+      if (!pending) return;
+      try {
+        pending.viewerWindow.postMessage(initMessage, '*');
+      } catch (error) {
+        TRACE('viewer init retry failed, requestId=' + viewerRequestId);
+      }
+    }, 100);
+    pendingViewerRequests.set(viewerRequestId, {
+      viewerWindow,
+      initTimer,
+      initMessage,
+      timeoutId: setTimeout(() => {
+        clearInterval(initTimer);
+        pendingViewerRequests.delete(viewerRequestId);
+        TRACE('viewer handshake timed out, requestId=' + viewerRequestId);
+      }, 10000)
+    });
+
+    try {
+      viewerWindow.postMessage(initMessage, '*');
+    } catch (error) {
+      TRACE('viewer init initial post failed, requestId=' + viewerRequestId);
+    }
+  }
+
+  function sendViewerRuntimeInit(initMessage) {
+    let acknowledged = false;
+    let timer;
+    const send = () => {
+      if (acknowledged) return;
+      chrome.runtime.sendMessage(initMessage, (response) => {
+        if (chrome.runtime.lastError) return;
+        if (response && response.ok === true) {
+          acknowledged = true;
+          clearInterval(timer);
+          TRACE('split viewer initialized, requestId=' + initMessage.requestId);
+        }
+      });
+    };
+    timer = setInterval(send, 100);
+    setTimeout(() => {
+      clearInterval(timer);
+      if (!acknowledged) {
+        TRACE('split viewer initialization timed out, requestId=' + initMessage.requestId);
+      }
+    }, 10000);
+    send();
+  }
+
   function findDiagramTitle(blockEl) {
     const message = blockEl.closest(
       '[data-message-author-role], [data-testid^="conversation-turn"], article'
@@ -534,56 +596,40 @@
       TRACE('toggle clicked, showingSource=' + showingSource);
     });
 
-    viewerBtn.addEventListener('click', () => {
-      const viewerRequestId = `viewer-${++viewerCounter}-${Date.now()}`;
-      // Only the one-time request id is put in the fragment. The PlantUML
-      // source remains in memory and is transferred by postMessage.
-      const viewerUrl = `${VIEWER_URL}#requestId=${encodeURIComponent(viewerRequestId)}`;
-      const viewerWindow = window.open(viewerUrl, '_blank');
-      if (!viewerWindow) {
-        viewerBtn.title = 'Unable to open diagram viewer; allow pop-ups for ChatGPT';
-        TRACE('viewer popup was blocked, requestId=' + viewerRequestId);
-        return;
-      }
+  viewerBtn.addEventListener('click', () => {
+    const viewerRequestId = `viewer-${++viewerCounter}-${Date.now()}`;
+    const initMessage = {
+      type: 'PLANTUML_VIEWER_INIT',
+      requestId: viewerRequestId,
+      source,
+      dark,
+      title
+    };
 
-      const initMessage = {
-        type: 'PLANTUML_VIEWER_INIT',
-        requestId: viewerRequestId,
-        source,
-        dark,
-        title
-      };
-      const initTimer = setInterval(() => {
-        const pending = pendingViewerRequests.get(viewerRequestId);
-        if (!pending) return;
-        try {
-          // window.open() initially returns an about:blank window whose
-          // origin is still ChatGPT while viewer.html is loading. Use '*'
-          // for this bootstrap message; viewer.js authenticates it with the
-          // ChatGPT origin and requestId before accepting the source.
-          pending.viewerWindow.postMessage(initMessage, '*');
-        } catch (error) {
-          TRACE('viewer init retry failed, requestId=' + viewerRequestId);
+    const sendSplitRequest = () => {
+      chrome.runtime.sendMessage({
+        type: 'PLANTUML_OPEN_SPLIT_VIEWER',
+        requestId: viewerRequestId
+      }, (result) => {
+        const error = chrome.runtime.lastError;
+        if (error || !result || result.mode === 'fallback') {
+          TRACE('split viewer unavailable, using standalone viewer', error || result?.reason);
+          openStandaloneViewer(viewerRequestId, initMessage, viewerBtn);
+          return;
         }
-      }, 100);
-      pendingViewerRequests.set(viewerRequestId, {
-        viewerWindow,
-        initTimer,
-        initMessage,
-        timeoutId: setTimeout(() => {
-          clearInterval(initTimer);
-          pendingViewerRequests.delete(viewerRequestId);
-          TRACE('viewer handshake timed out, requestId=' + viewerRequestId);
-        }, 10000)
+        if (result.mode === 'already-split') {
+          viewerBtn.title = 'Current tab is already in a split view';
+          TRACE('viewer not opened because current tab is already split');
+          return;
+        }
+
+        viewerBtn.title = 'Open diagram viewer in split view';
+        sendViewerRuntimeInit(initMessage);
       });
-      // Try once immediately as well; the interval covers the case where
-      // the new extension page has not finished loading yet.
-      try {
-        viewerWindow.postMessage(initMessage, '*');
-      } catch (error) {
-        TRACE('viewer init initial post failed, requestId=' + viewerRequestId);
-      }
-    });
+    };
+
+    sendSplitRequest();
+  });
 
     // ------------------------------------------------------------------
     // Bitmap-copy button: ask the iframe to render the SVG to a PNG

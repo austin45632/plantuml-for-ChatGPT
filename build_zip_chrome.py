@@ -39,6 +39,7 @@ OUT = ROOT / f"plantuml-for-chatgpt-chrome-{version}.zip"
 FILES = {
     "manifest.json":         CHROME_DIR / "manifest.json",
     "content.js":            CHROME_DIR / "content.js",
+    "service_worker.js":     CHROME_DIR / "service_worker.js",
     "renderer.html":         CHROME_DIR / "renderer.html",
     "renderer.js":           CHROME_DIR / "renderer.js",
     "viewer.html":           CHROME_DIR / "viewer.html",

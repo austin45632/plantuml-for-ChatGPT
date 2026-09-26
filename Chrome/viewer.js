@@ -39,6 +39,7 @@ let bitmapCounter = 0;
 let readyTimer = null;
 const pendingBitmap = new Map();
 const pendingSvg = new Map();
+let runtimeInitAccepted = false;
 
 function postToRenderer(message) {
   renderer.contentWindow.postMessage(message, '*');
@@ -168,13 +169,45 @@ function closeViewer() {
   }, 100);
 }
 
+function acceptViewerInit(data) {
+  if (!data || data.requestId !== requestId || typeof data.source !== 'string') {
+    return false;
+  }
+  if (runtimeInitAccepted && ready) return true;
+
+  runtimeInitAccepted = true;
+  source = data.source;
+  dark = data.dark === true;
+  document.body.classList.toggle('dark', dark);
+  titleEl.textContent = typeof data.title === 'string' && data.title ? data.title : 'PlantUML diagram';
+  sourceEl.value = source;
+  renderer.src = RENDERER_URL;
+  ready = true;
+  if (readyTimer) {
+    clearInterval(readyTimer);
+    readyTimer = null;
+  }
+  setStatus('Loading diagram…');
+  return true;
+}
+
+// Split View pages are not opened with window.open(), so they do not have an
+// opener WindowProxy. Runtime messaging is retried by the content script
+// while this page is loading to avoid losing the source.
+chrome.runtime.onMessage.addListener((data, sender, sendResponse) => {
+  if (!data || data.type !== 'PLANTUML_VIEWER_INIT') return false;
+  if (!acceptViewerInit(data)) return false;
+  sendResponse({ ok: true, requestId });
+  return false;
+});
+
 window.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || typeof data !== 'object') return;
 
   if (data.type === 'PLANTUML_VIEWER_INIT') {
     if (event.origin !== CHATGPT_ORIGIN || data.requestId !== requestId) return;
-    if (typeof data.source !== 'string') return;
+    if (!acceptViewerInit(data)) return;
     // A content script can expose a different WindowProxy wrapper (or a
     // null source) when it forwards the message from the ChatGPT page.
     // The ChatGPT origin and one-time random requestId still authenticate
@@ -182,18 +215,6 @@ window.addEventListener('message', (event) => {
     if (event.source && openerWindow && event.source !== openerWindow) {
       console.debug('[PlantUML viewer] opener proxy differs; accepting matching INIT');
     }
-    source = data.source;
-    dark = data.dark === true;
-    document.body.classList.toggle('dark', dark);
-    titleEl.textContent = typeof data.title === 'string' && data.title ? data.title : 'PlantUML diagram';
-    sourceEl.value = source;
-    renderer.src = RENDERER_URL;
-    ready = true;
-    if (readyTimer) {
-      clearInterval(readyTimer);
-      readyTimer = null;
-    }
-    setStatus('Loading diagram…');
     return;
   }
 
