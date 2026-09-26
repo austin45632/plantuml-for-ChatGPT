@@ -104,6 +104,13 @@ function changeZoom(factor) {
 
 function toggleSource() {
   sourceVisible = !sourceVisible;
+  if (!sourceVisible) {
+    source = sourceEl.value;
+    if (ready) {
+      setStatus('Rendering diagram…');
+      postToRenderer({ type: 'PLANTUML_RENDER', source, requestId, options: { dark } });
+    }
+  }
   sourceEl.style.display = sourceVisible ? 'block' : 'none';
   renderer.style.display = sourceVisible ? 'none' : 'block';
   sourceToggle.textContent = sourceVisible ? 'Show diagram' : 'Show source';
@@ -247,6 +254,9 @@ document.getElementById('zoomOut').addEventListener('click', () => changeZoom(0.
 document.getElementById('zoomIn').addEventListener('click', () => changeZoom(1.25));
 document.getElementById('reset').addEventListener('click', fitDiagram);
 sourceToggle.addEventListener('click', toggleSource);
+sourceEl.addEventListener('input', () => {
+  source = sourceEl.value;
+});
 document.getElementById('copySvg').addEventListener('click', copySvg);
 document.getElementById('copyPng').addEventListener('click', copyPng);
 document.getElementById('close').addEventListener('click', closeViewer);
