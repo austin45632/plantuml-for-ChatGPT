@@ -152,8 +152,7 @@ TRACE('message listener attached');
 // Implemented inside the renderer iframe (rather than the parent
 // content script) so positioning is straightforward and the menu
 // doesn't have to cross the iframe boundary. Event delegation on
-// #plantuml-output keeps it working after every re-render (notably
-// in the live preview of the edit-as-draft modal).
+// #plantuml-output keeps it working after every re-render.
 // ------------------------------------------------------------------
 let ctxMenuEl = null;
 
